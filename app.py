@@ -86,7 +86,7 @@ st.write("User:", st.session_state.current_user)
 tab1, tab2 = st.tabs(["🧪 EEG Mode", "🧠 Self Analysis"])
 
 # ===========================
-# EEG MODE (FINAL)
+# EEG MODE
 # ===========================
 with tab1:
 
@@ -111,13 +111,11 @@ with tab1:
 
     file = st.session_state.selected_file
     path = os.path.join(DATA_PATH, file)
-
     st.success(f"Selected file: {file}")
 
     # LOAD + FILTER
     raw = mne.io.read_raw_edf(path, preload=True, verbose=False)
     raw.filter(0.5, 30, verbose=False)
-
     data = raw.get_data()
     sfreq = raw.info['sfreq']
 
@@ -140,24 +138,22 @@ with tab1:
     alpha = band_power(8, 12)
     beta = band_power(12, 30)
 
-    # NORMALIZE
+    # RELATIVE POWER
     total = delta + theta + alpha + beta
     delta, theta, alpha, beta = delta/total, theta/total, alpha/total, beta/total
 
     features = np.array([delta, theta, alpha, beta])
     features = (features - np.mean(features)) / (np.std(features) + 1e-6)
-
     delta, theta, alpha, beta = features
 
     # DOMINANCE
     band_dict = {"Delta": delta, "Theta": theta, "Alpha": alpha, "Beta": beta}
     sorted_bands = sorted(band_dict.items(), key=lambda x: x[1], reverse=True)
-
     top_band, top_value = sorted_bands[0]
     second_value = sorted_bands[1][1]
     confidence = top_value - second_value
 
-    # CLASSIFICATION
+    # CLASSIFICATION + ADVICE
     if confidence < 0.3:
         state = "Uncertain"
     else:
@@ -170,7 +166,6 @@ with tab1:
         elif top_band == "Alpha":
             state = "Calm" if alpha > 0.3 else "Neutral"
 
-    # UI CARD
     colors = {
         "Calm": "#4CAF50",
         "Stressed": "#F44336",
@@ -181,6 +176,16 @@ with tab1:
         "Uncertain": "#607D8B"
     }
 
+    advice = {
+        "Calm": "Balanced and stable 🌿",
+        "Stressed": "High cognitive load ⚠️",
+        "Drowsy": "Low alertness 😴",
+        "Deep Relaxation": "Very deep calm 🧘",
+        "Neutral": "No dominant state",
+        "Low Activity": "Low brain activity detected",
+        "Uncertain": "Signal unclear, try another sample"
+    }
+
     st.markdown(f"""
     <div style='background:{colors[state]};
                 padding:30px;
@@ -188,11 +193,12 @@ with tab1:
                 text-align:center;
                 color:white'>
         <h1>{state}</h1>
+        <p>{advice[state]}</p>
         <h3>Confidence: {round(float(confidence),2)}</h3>
     </div>
     """, unsafe_allow_html=True)
 
-    # SAVE
+    # SAVE HISTORY
     st.session_state.history_eeg[st.session_state.current_user].append({
         "time": datetime.now().strftime("%H:%M"),
         "state": state,
@@ -200,17 +206,11 @@ with tab1:
         "file": file
     })
 
-    # GRAPH
+    # VISUALIZATION
     fig, ax = plt.subplots()
     ax.plot(np.mean(data, axis=0)[:2000])
     st.pyplot(fig)
-
-    st.bar_chart({
-        "delta":[delta],
-        "theta":[theta],
-        "alpha":[alpha],
-        "beta":[beta]
-    })
+    st.bar_chart({"delta":[delta],"theta":[theta],"alpha":[alpha],"beta":[beta]})
 
     # HISTORY
     st.subheader("EEG History")
@@ -224,7 +224,7 @@ with tab1:
         """, unsafe_allow_html=True)
 
 # ===========================
-# SELF ANALYSIS (FIXED)
+# SELF ANALYSIS
 # ===========================
 with tab2:
 
@@ -240,13 +240,12 @@ with tab2:
         energy = st.slider("Energy Level", 0, 10, 5)
         sleep = st.slider("Sleep Quality", 0, 10, 5)
 
-    # BUTTON (KEY FIX)
+    # BUTTON (KEY)
     if st.button("Analyze My State", key="self_btn"):
 
         stress_score = stress * 1.5
         fatigue_score = (10 - energy) + (10 - sleep)
         focus_score = focus
-
         total = stress_score + fatigue_score - focus_score
 
         if total > 15:
@@ -265,7 +264,7 @@ with tab2:
             "state": state
         })
 
-    # CARD (OUTSIDE BUTTON)
+    # SHOW CARD
     if st.session_state.last_self_state:
 
         state = st.session_state.last_self_state
@@ -277,6 +276,13 @@ with tab2:
             "Balanced": "#4CAF50"
         }
 
+        advice = {
+            "Highly Stressed": "Immediate rest recommended 🛑",
+            "Stressed": "Slow down and breathe 🌬️",
+            "Unstable": "Try to rebalance your day ⚖️",
+            "Balanced": "You're doing great 🚀"
+        }
+
         st.markdown(f"""
         <div style='background:{colors[state]};
                     padding:30px;
@@ -284,6 +290,7 @@ with tab2:
                     text-align:center;
                     color:white'>
             <h1>{state}</h1>
+            <p>{advice[state]}</p>
         </div>
         """, unsafe_allow_html=True)
 
