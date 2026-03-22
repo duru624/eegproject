@@ -158,7 +158,7 @@ with tab1:
         state = "Uncertain"
     else:
         if top_band == "Beta":
-            state = "Stressed"
+            state = "Stressed1"
         elif top_band == "Theta":
             state = "Drowsy"
         elif top_band == "Delta":
