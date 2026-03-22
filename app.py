@@ -83,7 +83,7 @@ st.write("User:", st.session_state.current_user)
 tab1, tab2 = st.tabs(["🧪 EEG Mode", "🧠 Self Analysis"])
 
 # ===========================
-# EEG MODE
+# EEG MODE (FIXED VERSION)
 # ===========================
 with tab1:
 
@@ -103,7 +103,7 @@ with tab1:
         st.session_state.selected_file = random.choice(files)
 
     if st.session_state.selected_file is None:
-        st.info("Click the button to analyze a random EEG file")
+        st.info("Click to analyze a random EEG file")
         st.stop()
 
     file = st.session_state.selected_file
@@ -111,29 +111,68 @@ with tab1:
 
     st.success(f"Selected file: {file}")
 
+    # -------------------------
+    # LOAD EEG
+    # -------------------------
     raw = mne.io.read_raw_edf(path, preload=True, verbose=False)
-    signal = raw.get_data()[0]
 
-    fft = np.abs(np.fft.rfft(signal))
-    freqs = np.fft.rfftfreq(len(signal), 1/raw.info['sfreq'])
+    # Tüm kanalların ortalaması
+    data = raw.get_data()
+    signal = np.mean(data, axis=0)
 
-    delta = np.mean(fft[(freqs >= 0.5) & (freqs < 4)])
-    theta = np.mean(fft[(freqs >= 4) & (freqs < 8)])
-    alpha = np.mean(fft[(freqs >= 8) & (freqs < 12)])
-    beta = np.mean(fft[(freqs >= 12) & (freqs < 30)])
+    sfreq = raw.info['sfreq']
 
+    # -------------------------
+    # WELCH PSD (GERÇEK POWER)
+    # -------------------------
+    psd, freqs = mne.time_frequency.psd_array_welch(
+        signal,
+        sfreq=sfreq,
+        fmin=0.5,
+        fmax=30,
+        n_fft=2048
+    )
+
+    # -------------------------
+    # BAND POWER
+    # -------------------------
+    def band_power(fmin, fmax):
+        return np.sum(psd[(freqs >= fmin) & (freqs < fmax)])
+
+    delta = band_power(0.5, 4)
+    theta = band_power(4, 8)
+    alpha = band_power(8, 12)
+    beta = band_power(12, 30)
+
+    # -------------------------
+    # RELATIVE POWER
+    # -------------------------
     total = delta + theta + alpha + beta
     delta, theta, alpha, beta = delta/total, theta/total, alpha/total, beta/total
 
-    values = {
-        "Calm": alpha,
-        "Stressed": beta,
-        "Drowsy": theta,
-        "Deep Relaxation": delta
-    }
+    # -------------------------
+    # Z-SCORE NORMALIZATION
+    # -------------------------
+    bands = np.array([delta, theta, alpha, beta])
+    bands = (bands - np.mean(bands)) / (np.std(bands) + 1e-6)
 
-    state = max(values, key=values.get)
+    delta, theta, alpha, beta = bands
 
+    # -------------------------
+    # SMART CLASSIFICATION
+    # -------------------------
+    if beta > 0.8:
+        state = "Stressed"
+    elif theta > 0.5:
+        state = "Drowsy"
+    elif delta > 0.7:
+        state = "Deep Relaxation"
+    else:
+        state = "Calm"
+
+    # -------------------------
+    # UI
+    # -------------------------
     colors = {
         "Calm": "#4CAF50",
         "Stressed": "#F44336",
@@ -142,13 +181,12 @@ with tab1:
     }
 
     advice = {
-        "Calm": "You're in a great state 🌿",
-        "Stressed": "Take a deep breath 🫁",
-        "Drowsy": "You may need rest 😴",
+        "Calm": "Balanced and stable 🌿",
+        "Stressed": "High cognitive load ⚠️",
+        "Drowsy": "Low alertness 😴",
         "Deep Relaxation": "Very deep calm 🧘"
     }
 
-    # EMOTION CARD
     st.markdown(f"""
     <div style='background:{colors[state]};
                 padding:30px;
@@ -160,14 +198,18 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
 
+    # -------------------------
     # SAVE HISTORY
+    # -------------------------
     st.session_state.history_eeg[st.session_state.current_user].append({
         "time": datetime.now().strftime("%H:%M"),
         "state": state,
         "file": file
     })
 
+    # -------------------------
     # GRAPH
+    # -------------------------
     fig, ax = plt.subplots()
     ax.plot(signal[:2000])
     st.pyplot(fig)
@@ -179,20 +221,16 @@ with tab1:
         "beta":[beta]
     })
 
-    # HISTORY
-    st.subheader("EEG History")
-
-    for h in st.session_state.history_eeg[st.session_state.current_user][::-1]:
-        st.markdown(f"""
-        <div style='padding:15px;
-                    margin:10px 0;
-                    border-radius:15px;
-                    background:#111;
-                    color:white'>
-            <b>{h["state"]}</b> | {h["file"]} <br>
-            <small>{h["time"]}</small>
-        </div>
-        """, unsafe_allow_html=True)
+    # -------------------------
+    # DEBUG (ÇOK ÖNEMLİ)
+    # -------------------------
+    st.write("Band values (z-score normalized):")
+    st.write({
+        "delta": float(delta),
+        "theta": float(theta),
+        "alpha": float(alpha),
+        "beta": float(beta)
+    })
 
 # ===========================
 # SELF ANALYSIS (UPGRADED)
