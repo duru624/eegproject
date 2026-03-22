@@ -157,9 +157,9 @@ with tab1:
     if confidence < 0.3:
         state = "Uncertain"
     else:
-        if top_band == "Beta":
+        if top_band == "Theta":
             state = "Stressed1"
-        elif top_band == "Theta":
+        elif top_band == "Beta":
             state = "Drowsy"
         elif top_band == "Delta":
             state = "Deep Relaxation" if delta > 0.8 else "Low Activity"
