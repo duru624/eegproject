@@ -13,7 +13,7 @@ DATA_PATH = "data"
 st.set_page_config(page_title="NeuroPulse", layout="wide")
 
 # -------------------------
-# SESSION STATE
+# SESSION STATE INIT
 # -------------------------
 if "users" not in st.session_state:
     st.session_state.users = {}
@@ -29,6 +29,9 @@ if "history_test" not in st.session_state:
 
 if "selected_file" not in st.session_state:
     st.session_state.selected_file = None
+
+if "last_self_state" not in st.session_state:
+    st.session_state.last_self_state = None
 
 # -------------------------
 # AUTH
@@ -83,11 +86,11 @@ st.write("User:", st.session_state.current_user)
 tab1, tab2 = st.tabs(["🧪 EEG Mode", "🧠 Self Analysis"])
 
 # ===========================
-# EEG MODE (PRO LEVEL)
+# EEG MODE (FINAL)
 # ===========================
 with tab1:
 
-    st.header("EEG Analysis (Pro Mode)")
+    st.header("EEG Analysis")
 
     if not os.path.exists(DATA_PATH):
         st.error("Data folder not found!")
@@ -99,7 +102,7 @@ with tab1:
         st.error("No .edf files found")
         st.stop()
 
-    if st.button("🎲 Analyze Random EEG"):
+    if st.button("🎲 Analyze Random EEG", key="eeg_btn"):
         st.session_state.selected_file = random.choice(files)
 
     if st.session_state.selected_file is None:
@@ -111,20 +114,14 @@ with tab1:
 
     st.success(f"Selected file: {file}")
 
-    # -------------------------
     # LOAD + FILTER
-    # -------------------------
     raw = mne.io.read_raw_edf(path, preload=True, verbose=False)
-
-    # Band-pass filter (çok kritik!)
     raw.filter(0.5, 30, verbose=False)
 
     data = raw.get_data()
     sfreq = raw.info['sfreq']
 
-    # -------------------------
-    # PSD (multi-channel)
-    # -------------------------
+    # PSD
     psd, freqs = mne.time_frequency.psd_array_welch(
         data,
         sfreq=sfreq,
@@ -133,9 +130,7 @@ with tab1:
         n_fft=2048
     )
 
-    # -------------------------
-    # BAND POWER (channel average)
-    # -------------------------
+    # BAND POWER
     def band_power(fmin, fmax):
         band = psd[:, (freqs >= fmin) & (freqs < fmax)]
         return np.mean(np.sum(band, axis=1))
@@ -145,66 +140,37 @@ with tab1:
     alpha = band_power(8, 12)
     beta = band_power(12, 30)
 
-    # -------------------------
-    # RELATIVE POWER
-    # -------------------------
+    # NORMALIZE
     total = delta + theta + alpha + beta
     delta, theta, alpha, beta = delta/total, theta/total, alpha/total, beta/total
 
-    # -------------------------
-    # FEATURE VECTOR
-    # -------------------------
     features = np.array([delta, theta, alpha, beta])
-
-    # Z-score normalize
     features = (features - np.mean(features)) / (np.std(features) + 1e-6)
+
     delta, theta, alpha, beta = features
 
-    # -------------------------
-    # DOMINANCE + CONFIDENCE
-    # -------------------------
-    band_dict = {
-        "Delta": delta,
-        "Theta": theta,
-        "Alpha": alpha,
-        "Beta": beta
-    }
-
+    # DOMINANCE
+    band_dict = {"Delta": delta, "Theta": theta, "Alpha": alpha, "Beta": beta}
     sorted_bands = sorted(band_dict.items(), key=lambda x: x[1], reverse=True)
 
     top_band, top_value = sorted_bands[0]
     second_value = sorted_bands[1][1]
+    confidence = top_value - second_value
 
-    confidence = top_value - second_value  # fark = güven
-
-    # -------------------------
-    # SMART CLASSIFICATION
-    # -------------------------
+    # CLASSIFICATION
     if confidence < 0.3:
         state = "Uncertain"
-
     else:
         if top_band == "Beta":
             state = "Stressed"
-
         elif top_band == "Theta":
             state = "Drowsy"
-
         elif top_band == "Delta":
-            if delta > 0.8:
-                state = "Deep Relaxation"
-            else:
-                state = "Low Activity"
-
+            state = "Deep Relaxation" if delta > 0.8 else "Low Activity"
         elif top_band == "Alpha":
-            if alpha > 0.3:
-                state = "Calm"
-            else:
-                state = "Neutral"
+            state = "Calm" if alpha > 0.3 else "Neutral"
 
-    # -------------------------
-    # UI
-    # -------------------------
+    # UI CARD
     colors = {
         "Calm": "#4CAF50",
         "Stressed": "#F44336",
@@ -215,16 +181,6 @@ with tab1:
         "Uncertain": "#607D8B"
     }
 
-    advice = {
-        "Calm": "Balanced and stable 🌿",
-        "Stressed": "High cognitive load ⚠️",
-        "Drowsy": "Low alertness 😴",
-        "Deep Relaxation": "Very deep calm 🧘",
-        "Neutral": "No dominant state",
-        "Low Activity": "Low brain activity detected",
-        "Uncertain": "Signal unclear, try another sample"
-    }
-
     st.markdown(f"""
     <div style='background:{colors[state]};
                 padding:30px;
@@ -232,14 +188,11 @@ with tab1:
                 text-align:center;
                 color:white'>
         <h1>{state}</h1>
-        <p>{advice[state]}</p>
         <h3>Confidence: {round(float(confidence),2)}</h3>
     </div>
     """, unsafe_allow_html=True)
 
-    # -------------------------
-    # SAVE HISTORY
-    # -------------------------
+    # SAVE
     st.session_state.history_eeg[st.session_state.current_user].append({
         "time": datetime.now().strftime("%H:%M"),
         "state": state,
@@ -247,9 +200,7 @@ with tab1:
         "file": file
     })
 
-    # -------------------------
-    # VISUALIZATION
-    # -------------------------
+    # GRAPH
     fig, ax = plt.subplots()
     ax.plot(np.mean(data, axis=0)[:2000])
     st.pyplot(fig)
@@ -261,44 +212,23 @@ with tab1:
         "beta":[beta]
     })
 
-    # -------------------------
-    # DEBUG PANEL (çok iyi durur demo’da)
-    # -------------------------
-    with st.expander("See detailed brain metrics"):
-        st.write({
-            "Delta": float(delta),
-            "Theta": float(theta),
-            "Alpha": float(alpha),
-            "Beta": float(beta),
-            "Confidence": float(confidence)
-        })
-
-    # -------------------------
     # HISTORY
-    # -------------------------
     st.subheader("EEG History")
-
     for h in st.session_state.history_eeg[st.session_state.current_user][::-1]:
         st.markdown(f"""
-        <div style='padding:15px;
-                    margin:10px 0;
-                    border-radius:15px;
-                    background:#111;
-                    color:white'>
-            <b>{h["state"]}</b> ({round(h["confidence"],2)})<br>
-            {h["file"]}<br>
-            <small>{h["time"]}</small>
+        <div style='padding:15px;margin:10px 0;border-radius:15px;background:#111;color:white'>
+        <b>{h["state"]}</b> ({round(h["confidence"],2)})<br>
+        {h["file"]}<br>
+        <small>{h["time"]}</small>
         </div>
         """, unsafe_allow_html=True)
 
 # ===========================
-# SELF ANALYSIS (UPGRADED)
+# SELF ANALYSIS (FIXED)
 # ===========================
 with tab2:
 
     st.header("Self Mental State Analysis")
-
-    st.write("Answer based on how you feel right now")
 
     col1, col2 = st.columns(2)
 
@@ -310,9 +240,9 @@ with tab2:
         energy = st.slider("Energy Level", 0, 10, 5)
         sleep = st.slider("Sleep Quality", 0, 10, 5)
 
-    if st.button("Analyze My State"):
+    # BUTTON (KEY FIX)
+    if st.button("Analyze My State", key="self_btn"):
 
-        # IMPROVED SCORING
         stress_score = stress * 1.5
         fatigue_score = (10 - energy) + (10 - sleep)
         focus_score = focus
@@ -328,6 +258,18 @@ with tab2:
         else:
             state = "Balanced"
 
+        st.session_state.last_self_state = state
+
+        st.session_state.history_test[st.session_state.current_user].append({
+            "time": datetime.now().strftime("%H:%M"),
+            "state": state
+        })
+
+    # CARD (OUTSIDE BUTTON)
+    if st.session_state.last_self_state:
+
+        state = st.session_state.last_self_state
+
         colors = {
             "Highly Stressed": "#D32F2F",
             "Stressed": "#F57C00",
@@ -335,14 +277,6 @@ with tab2:
             "Balanced": "#4CAF50"
         }
 
-        advice = {
-            "Highly Stressed": "Immediate rest recommended 🛑",
-            "Stressed": "Slow down and breathe",
-            "Unstable": "Try to rebalance your day",
-            "Balanced": "You're doing great 🚀"
-        }
-
-        # EMOTION CARD
         st.markdown(f"""
         <div style='background:{colors[state]};
                     padding:30px;
@@ -350,27 +284,15 @@ with tab2:
                     text-align:center;
                     color:white'>
             <h1>{state}</h1>
-            <p>{advice[state]}</p>
         </div>
         """, unsafe_allow_html=True)
 
-        # SAVE HISTORY
-        st.session_state.history_test[st.session_state.current_user].append({
-            "time": datetime.now().strftime("%H:%M"),
-            "state": state
-        })
-
     # HISTORY
     st.subheader("Your Mental History")
-
     for h in st.session_state.history_test[st.session_state.current_user][::-1]:
         st.markdown(f"""
-        <div style='padding:15px;
-                    margin:10px 0;
-                    border-radius:15px;
-                    background:#222;
-                    color:white'>
-            <b>{h["state"]}</b><br>
-            <small>{h["time"]}</small>
+        <div style='padding:15px;margin:10px 0;border-radius:15px;background:#222;color:white'>
+        <b>{h["state"]}</b><br>
+        <small>{h["time"]}</small>
         </div>
         """, unsafe_allow_html=True)
