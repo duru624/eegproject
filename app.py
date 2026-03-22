@@ -83,11 +83,11 @@ st.write("User:", st.session_state.current_user)
 tab1, tab2 = st.tabs(["🧪 EEG Mode", "🧠 Self Analysis"])
 
 # ===========================
-# EEG MODE (FIXED VERSION)
+# EEG MODE (PRO LEVEL)
 # ===========================
 with tab1:
 
-    st.header("EEG Analysis")
+    st.header("EEG Analysis (Pro Mode)")
 
     if not os.path.exists(DATA_PATH):
         st.error("Data folder not found!")
@@ -112,21 +112,21 @@ with tab1:
     st.success(f"Selected file: {file}")
 
     # -------------------------
-    # LOAD EEG
+    # LOAD + FILTER
     # -------------------------
     raw = mne.io.read_raw_edf(path, preload=True, verbose=False)
 
-    # Tüm kanalların ortalaması
-    data = raw.get_data()
-    signal = np.mean(data, axis=0)
+    # Band-pass filter (çok kritik!)
+    raw.filter(0.5, 30, verbose=False)
 
+    data = raw.get_data()
     sfreq = raw.info['sfreq']
 
     # -------------------------
-    # WELCH PSD (GERÇEK POWER)
+    # PSD (multi-channel)
     # -------------------------
     psd, freqs = mne.time_frequency.psd_array_welch(
-        signal,
+        data,
         sfreq=sfreq,
         fmin=0.5,
         fmax=30,
@@ -134,10 +134,11 @@ with tab1:
     )
 
     # -------------------------
-    # BAND POWER
+    # BAND POWER (channel average)
     # -------------------------
     def band_power(fmin, fmax):
-        return np.sum(psd[(freqs >= fmin) & (freqs < fmax)])
+        band = psd[:, (freqs >= fmin) & (freqs < fmax)]
+        return np.mean(np.sum(band, axis=1))
 
     delta = band_power(0.5, 4)
     theta = band_power(4, 8)
@@ -151,24 +152,55 @@ with tab1:
     delta, theta, alpha, beta = delta/total, theta/total, alpha/total, beta/total
 
     # -------------------------
-    # Z-SCORE NORMALIZATION
+    # FEATURE VECTOR
     # -------------------------
-    bands = np.array([delta, theta, alpha, beta])
-    bands = (bands - np.mean(bands)) / (np.std(bands) + 1e-6)
+    features = np.array([delta, theta, alpha, beta])
 
-    delta, theta, alpha, beta = bands
+    # Z-score normalize
+    features = (features - np.mean(features)) / (np.std(features) + 1e-6)
+    delta, theta, alpha, beta = features
+
+    # -------------------------
+    # DOMINANCE + CONFIDENCE
+    # -------------------------
+    band_dict = {
+        "Delta": delta,
+        "Theta": theta,
+        "Alpha": alpha,
+        "Beta": beta
+    }
+
+    sorted_bands = sorted(band_dict.items(), key=lambda x: x[1], reverse=True)
+
+    top_band, top_value = sorted_bands[0]
+    second_value = sorted_bands[1][1]
+
+    confidence = top_value - second_value  # fark = güven
 
     # -------------------------
     # SMART CLASSIFICATION
     # -------------------------
-    if beta > 0.8:
-        state = "Stressed"
-    elif theta > 0.5:
-        state = "Drowsy"
-    elif delta > 0.7:
-        state = "Deep Relaxation"
+    if confidence < 0.3:
+        state = "Uncertain"
+
     else:
-        state = "Calm"
+        if top_band == "Beta":
+            state = "Stressed"
+
+        elif top_band == "Theta":
+            state = "Drowsy"
+
+        elif top_band == "Delta":
+            if delta > 0.8:
+                state = "Deep Relaxation"
+            else:
+                state = "Low Activity"
+
+        elif top_band == "Alpha":
+            if alpha > 0.3:
+                state = "Calm"
+            else:
+                state = "Neutral"
 
     # -------------------------
     # UI
@@ -177,14 +209,20 @@ with tab1:
         "Calm": "#4CAF50",
         "Stressed": "#F44336",
         "Drowsy": "#FFC107",
-        "Deep Relaxation": "#2196F3"
+        "Deep Relaxation": "#2196F3",
+        "Neutral": "#9E9E9E",
+        "Low Activity": "#3F51B5",
+        "Uncertain": "#607D8B"
     }
 
     advice = {
         "Calm": "Balanced and stable 🌿",
         "Stressed": "High cognitive load ⚠️",
         "Drowsy": "Low alertness 😴",
-        "Deep Relaxation": "Very deep calm 🧘"
+        "Deep Relaxation": "Very deep calm 🧘",
+        "Neutral": "No dominant state",
+        "Low Activity": "Low brain activity detected",
+        "Uncertain": "Signal unclear, try another sample"
     }
 
     st.markdown(f"""
@@ -195,6 +233,7 @@ with tab1:
                 color:white'>
         <h1>{state}</h1>
         <p>{advice[state]}</p>
+        <h3>Confidence: {round(float(confidence),2)}</h3>
     </div>
     """, unsafe_allow_html=True)
 
@@ -204,14 +243,15 @@ with tab1:
     st.session_state.history_eeg[st.session_state.current_user].append({
         "time": datetime.now().strftime("%H:%M"),
         "state": state,
+        "confidence": float(confidence),
         "file": file
     })
 
     # -------------------------
-    # GRAPH
+    # VISUALIZATION
     # -------------------------
     fig, ax = plt.subplots()
-    ax.plot(signal[:2000])
+    ax.plot(np.mean(data, axis=0)[:2000])
     st.pyplot(fig)
 
     st.bar_chart({
@@ -222,15 +262,34 @@ with tab1:
     })
 
     # -------------------------
-    # DEBUG (ÇOK ÖNEMLİ)
+    # DEBUG PANEL (çok iyi durur demo’da)
     # -------------------------
-    st.write("Band values (z-score normalized):")
-    st.write({
-        "delta": float(delta),
-        "theta": float(theta),
-        "alpha": float(alpha),
-        "beta": float(beta)
-    })
+    with st.expander("See detailed brain metrics"):
+        st.write({
+            "Delta": float(delta),
+            "Theta": float(theta),
+            "Alpha": float(alpha),
+            "Beta": float(beta),
+            "Confidence": float(confidence)
+        })
+
+    # -------------------------
+    # HISTORY
+    # -------------------------
+    st.subheader("EEG History")
+
+    for h in st.session_state.history_eeg[st.session_state.current_user][::-1]:
+        st.markdown(f"""
+        <div style='padding:15px;
+                    margin:10px 0;
+                    border-radius:15px;
+                    background:#111;
+                    color:white'>
+            <b>{h["state"]}</b> ({round(h["confidence"],2)})<br>
+            {h["file"]}<br>
+            <small>{h["time"]}</small>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ===========================
 # SELF ANALYSIS (UPGRADED)
