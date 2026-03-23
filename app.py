@@ -10,28 +10,14 @@ import mne
 # CONFIG
 # -------------------------
 DATA_PATH = "data"
-st.set_page_config(page_title="NeuroPulse", layout="wide")
+st.set_page_config(page_title="NeuroPulse AI", layout="wide")
 
 # -------------------------
 # SESSION STATE
 # -------------------------
-if "users" not in st.session_state:
-    st.session_state.users = {}
-
-if "current_user" not in st.session_state:
-    st.session_state.current_user = None
-
-if "history_eeg" not in st.session_state:
-    st.session_state.history_eeg = {}
-
-if "history_test" not in st.session_state:
-    st.session_state.history_test = {}
-
-if "selected_file" not in st.session_state:
-    st.session_state.selected_file = None
-
-if "last_self_state" not in st.session_state:
-    st.session_state.last_self_state = None
+for key in ["users","current_user","history_eeg","history_test","selected_file","last_self_state","last_eeg_state"]:
+    if key not in st.session_state:
+        st.session_state[key] = {} if "history" in key or key=="users" else None
 
 # -------------------------
 # AUTH
@@ -39,256 +25,164 @@ if "last_self_state" not in st.session_state:
 st.sidebar.title("Account")
 username = st.sidebar.text_input("Username")
 
-col1, col2 = st.sidebar.columns(2)
+c1,c2 = st.sidebar.columns(2)
 
-if col1.button("Login"):
+if c1.button("Login"):
     if username in st.session_state.users:
         st.session_state.current_user = username
         st.sidebar.success("Logged in")
     else:
         st.sidebar.error("User not found")
 
-if col2.button("Register"):
+if c2.button("Register"):
     if username and username not in st.session_state.users:
-        st.session_state.users[username] = []
-        st.session_state.history_eeg[username] = []
-        st.session_state.history_test[username] = []
-        st.session_state.current_user = username
+        st.session_state.users[username]=[]
+        st.session_state.history_eeg[username]=[]
+        st.session_state.history_test[username]=[]
+        st.session_state.current_user=username
         st.sidebar.success("Account created")
-    else:
-        st.sidebar.error("Invalid username")
-
-if st.session_state.current_user:
-    if st.sidebar.button("Logout"):
-        st.session_state.current_user = None
 
 if st.session_state.current_user is None:
-    st.title("🧠 NeuroPulse")
+    st.title("🧠 NeuroPulse AI")
+    st.write("Mental State Detection Without Words")
     st.stop()
 
-st.title("🧠 NeuroPulse")
-st.write("User:", st.session_state.current_user)
+user = st.session_state.current_user
 
-tab1, tab2 = st.tabs(["🧪 EEG Mode", "🧠 Self Analysis"])
+st.title("🧠 NeuroPulse AI")
+st.write("User:", user)
+
+tab1,tab2,tab3 = st.tabs(["🧪 EEG","🧠 Self","🤖 AI Fusion"])
 
 # ===========================
-# EEG MODE (FIXED)
+# EEG MODE
 # ===========================
 with tab1:
 
     st.header("EEG Analysis")
 
-    if not os.path.exists(DATA_PATH):
-        st.error("Data folder not found!")
-        st.stop()
+    files=[f for f in os.listdir(DATA_PATH) if f.endswith(".edf")]
 
-    files = [f for f in os.listdir(DATA_PATH) if f.endswith(".edf")]
+    if st.button("🎲 Analyze EEG"):
+        st.session_state.selected_file=random.choice(files)
 
-    if st.button("🎲 Analyze Random EEG"):
-        st.session_state.selected_file = random.choice(files)
+    if st.session_state.selected_file:
 
-    if st.session_state.selected_file is None:
-        st.info("Click to analyze EEG")
-        st.stop()
+        path=os.path.join(DATA_PATH,st.session_state.selected_file)
+        raw=mne.io.read_raw_edf(path,preload=True,verbose=False)
+        raw.filter(0.5,30,verbose=False)
 
-    file = st.session_state.selected_file
-    path = os.path.join(DATA_PATH, file)
+        data=raw.get_data()
+        sfreq=raw.info['sfreq']
 
-    st.success(f"Selected: {file}")
+        psd,freqs=mne.time_frequency.psd_array_welch(
+            data,sfreq=sfreq,fmin=0.5,fmax=30,n_fft=1024)
 
-    # LOAD
-    raw = mne.io.read_raw_edf(path, preload=True, verbose=False)
-    raw.filter(0.5, 30, verbose=False)
+        def band(f1,f2):
+            return np.mean(np.sum(psd[:,(freqs>=f1)&(freqs<f2)],axis=1))
 
-    data = raw.get_data()
-    sfreq = raw.info['sfreq']
+        delta,theta,alpha,beta=band(0.5,4),band(4,8),band(8,12),band(12,30)
 
-    # PSD
-    psd, freqs = mne.time_frequency.psd_array_welch(
-        data,
-        sfreq=sfreq,
-        fmin=0.5,
-        fmax=30,
-        n_fft=1024
-    )
+        total=delta+theta+alpha+beta
+        delta,theta,alpha,beta=delta/total,theta/total,alpha/total,beta/total
 
-    # BAND POWER
-    def band(fmin, fmax):
-        return np.mean(np.sum(psd[:, (freqs >= fmin) & (freqs < fmax)], axis=1))
+        if beta>alpha*1.2: state="Stressed"
+        elif theta>alpha: state="Drowsy"
+        elif delta>0.35: state="Deep"
+        elif alpha>0.3: state="Calm"
+        else: state="Neutral"
 
-    delta = band(0.5, 4)
-    theta = band(4, 8)
-    alpha = band(8, 12)
-    beta = band(12, 30)
+        st.session_state.last_eeg_state=state
 
-    # RELATIVE
-    total = delta + theta + alpha + beta
-    delta, theta, alpha, beta = delta/total, theta/total, alpha/total, beta/total
+        st.session_state.history_eeg.setdefault(user,[])
+        st.session_state.history_eeg[user].append({"time":datetime.now().strftime("%H:%M"),"state":state})
 
-    # SMART LOGIC (FIXED)
-    if beta > alpha * 1.2:
-        state = "Stressed"
-    elif theta > alpha:
-        state = "Drowsy"
-    elif delta > 0.35:
-        state = "Deep Relaxation"
-    elif alpha > 0.3:
-        state = "Calm"
-    else:
-        state = "Neutral"
+        color={"Calm":"#4CAF50","Stressed":"#F44336","Drowsy":"#FFC107","Deep":"#2196F3","Neutral":"#9E9E9E"}[state]
 
-    # UI
-    colors = {
-        "Calm": "#4CAF50",
-        "Stressed": "#F44336",
-        "Drowsy": "#FFC107",
-        "Deep Relaxation": "#2196F3",
-        "Neutral": "#9E9E9E"
-    }
-
-    advice = {
-        "Calm": "Balanced 🌿",
-        "Stressed": "Take a breath 🫁",
-        "Drowsy": "You need rest 😴",
-        "Deep Relaxation": "Deep calm 🧘",
-        "Neutral": "Stable state"
-    }
-
-    st.markdown(f"""
-    <div style='background:{colors[state]};
-                padding:30px;
-                border-radius:20px;
-                text-align:center;
-                color:white'>
+        st.markdown(f"""
+        <div style='background:{color};padding:30px;border-radius:20px;color:white;text-align:center'>
         <h1>{state}</h1>
-        <p>{advice[state]}</p>
-    </div>
-    """, unsafe_allow_html=True)
+        </div>
+        """,unsafe_allow_html=True)
 
-    # SAVE HISTORY
-    st.session_state.history_eeg.setdefault(st.session_state.current_user, [])
-    st.session_state.history_eeg[st.session_state.current_user].append({
-        "time": datetime.now().strftime("%H:%M"),
-        "state": state
-    })
+        st.line_chart(np.mean(data,axis=0)[:2000])
 
-    # GRAPH
-    fig, ax = plt.subplots()
-    ax.plot(np.mean(data, axis=0)[:2000])
-    st.pyplot(fig)
-
-    st.bar_chart({
-        "delta":[delta],
-        "theta":[theta],
-        "alpha":[alpha],
-        "beta":[beta]
-    })
-
-    # HISTORY (FIXED)
-    st.subheader("EEG History")
-
-    history = st.session_state.history_eeg[st.session_state.current_user]
-
-    if len(history) == 0:
-        st.info("No history yet")
-    else:
-        for h in history[::-1]:
-            st.markdown(f"""
-            <div style='padding:15px;
-                        margin:10px 0;
-                        border-radius:12px;
-                        background:linear-gradient(135deg,#1f1f1f,#2a2a2a);
-                        color:white'>
-                <b>{h["state"]}</b>
-                <div style='font-size:12px;color:#aaa'>{h["time"]}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    # HISTORY
+    st.subheader("EEG Timeline")
+    hist=st.session_state.history_eeg.get(user,[])
+    for h in hist[::-1]:
+        st.markdown(f"<div style='padding:12px;margin:8px;background:#222;border-radius:12px;color:white'>{h['state']} — {h['time']}</div>",unsafe_allow_html=True)
 
 # ===========================
-# SELF ANALYSIS (PRETTY)
+# SELF ANALYSIS
 # ===========================
 with tab2:
 
-    st.header("Self Mental State Analysis")
+    st.header("Self Analysis")
 
-    col1, col2 = st.columns(2)
+    stress=st.slider("Stress",0,10,5)
+    focus=st.slider("Focus",0,10,5)
+    energy=st.slider("Energy",0,10,5)
+    sleep=st.slider("Sleep",0,10,5)
 
-    with col1:
-        stress = st.slider("Stress", 0, 10, 5)
-        focus = st.slider("Focus", 0, 10, 5)
+    if st.button("Analyze",key="self"):
 
-    with col2:
-        energy = st.slider("Energy", 0, 10, 5)
-        sleep = st.slider("Sleep", 0, 10, 5)
+        score=stress*1.5+(10-energy)+(10-sleep)-focus
 
-    if st.button("Analyze", key="self_btn"):
+        if score>15: state="Highly Stressed"
+        elif score>10: state="Stressed"
+        elif score>5: state="Unstable"
+        else: state="Balanced"
 
-        score = stress*1.5 + (10-energy) + (10-sleep) - focus
+        st.session_state.last_self_state=state
 
-        if score > 15:
-            state = "Highly Stressed"
-        elif score > 10:
-            state = "Stressed"
-        elif score > 5:
-            state = "Unstable"
-        else:
-            state = "Balanced"
-
-        st.session_state.last_self_state = state
-
-        st.session_state.history_test.setdefault(st.session_state.current_user, [])
-        st.session_state.history_test[st.session_state.current_user].append({
-            "time": datetime.now().strftime("%H:%M"),
-            "state": state
-        })
+        st.session_state.history_test.setdefault(user,[])
+        st.session_state.history_test[user].append({"time":datetime.now().strftime("%H:%M"),"state":state})
 
     if st.session_state.last_self_state:
 
-        state = st.session_state.last_self_state
+        state=st.session_state.last_self_state
 
-        colors = {
-            "Highly Stressed": "#D32F2F",
-            "Stressed": "#F57C00",
-            "Unstable": "#FFC107",
-            "Balanced": "#4CAF50"
-        }
-
-        advice = {
-            "Highly Stressed": "Immediate rest 🛑",
-            "Stressed": "Slow down",
-            "Unstable": "Rebalance",
-            "Balanced": "Great 🚀"
-        }
+        color={"Highly Stressed":"#D32F2F","Stressed":"#F57C00","Unstable":"#FFC107","Balanced":"#4CAF50"}[state]
 
         st.markdown(f"""
-        <div style='background:{colors[state]};
-                    padding:30px;
-                    border-radius:20px;
-                    text-align:center;
-                    color:white'>
-            <h1>{state}</h1>
-            <p>{advice[state]}</p>
+        <div style='background:{color};padding:30px;border-radius:20px;color:white;text-align:center'>
+        <h1>{state}</h1>
         </div>
-        """, unsafe_allow_html=True)
+        """,unsafe_allow_html=True)
 
-    # HISTORY (PRETTY FIX)
-    st.subheader("Your Mental History")
+    st.subheader("Mental Timeline")
+    hist=st.session_state.history_test.get(user,[])
+    for h in hist[::-1]:
+        st.markdown(f"<div style='padding:12px;margin:8px;background:#333;border-radius:12px;color:white'>{h['state']} — {h['time']}</div>",unsafe_allow_html=True)
 
-    history = st.session_state.history_test[st.session_state.current_user]
+# ===========================
+# AI FUSION (WINNING PART)
+# ===========================
+with tab3:
 
-    if len(history) == 0:
-        st.info("No history yet")
+    st.header("AI Mental Fusion")
+
+    eeg=st.session_state.last_eeg_state
+    self_s=st.session_state.last_self_state
+
+    if eeg and self_s:
+
+        if eeg=="Stressed" and "Stressed" in self_s:
+            result="Critical Stress"
+        elif eeg=="Calm" and self_s=="Balanced":
+            result="Optimal State"
+        elif eeg!=self_s:
+            result="Mismatch"
+        else:
+            result="Moderate"
+
+        st.markdown(f"""
+        <div style='background:#111;padding:40px;border-radius:25px;color:white;text-align:center'>
+        <h1>{result}</h1>
+        <p>Brain vs Self comparison</p>
+        </div>
+        """,unsafe_allow_html=True)
+
     else:
-        for h in history[::-1]:
-            st.markdown(f"""
-            <div style='padding:15px;
-                        margin:10px 0;
-                        border-radius:15px;
-                        background:linear-gradient(135deg,#2c2c2c,#3a3a3a);
-                        color:white;
-                        display:flex;
-                        justify-content:space-between'>
-                <span><b>{h["state"]}</b></span>
-                <span style='color:#bbb'>{h["time"]}</span>
-            </div>
-            """, unsafe_allow_html=True)
+        st.info("Run EEG and Self Analysis first")
