@@ -114,57 +114,14 @@ with tab1:
     st.success(f"Selected file: {file}")
 
     # LOAD + FILTER
-    raw = mne.io.read_raw_edf(path, preload=True, verbose=False)
-    raw.filter(0.5, 30, verbose=False)
-    data = raw.get_data()
-    sfreq = raw.info['sfreq']
-
-    # PSD
-    psd, freqs = mne.time_frequency.psd_array_welch(
-        data,
-        sfreq=sfreq,
-        fmin=0.5,
-        fmax=30,
-        n_fft=2048
-    )
-
-    # BAND POWER
-    def band_power(fmin, fmax):
-        band = psd[:, (freqs >= fmin) & (freqs < fmax)]
-        return np.mean(np.sum(band, axis=1))
-
-    delta = band_power(0.5, 4)
-    theta = band_power(4, 8)
-    alpha = band_power(8, 12)
-    beta = band_power(12, 30)
-
-    # RELATIVE POWER
-    total = delta + theta + alpha + beta
-    delta, theta, alpha, beta = delta/total, theta/total, alpha/total, beta/total
-
-    features = np.array([delta, theta, alpha, beta])
-    features = (features - np.mean(features)) / (np.std(features) + 1e-6)
-    delta, theta, alpha, beta = features
-
-    # DOMINANCE
-    band_dict = {"Delta": delta, "Theta": theta, "Alpha": alpha, "Beta": beta}
-    sorted_bands = sorted(band_dict.items(), key=lambda x: x[1], reverse=True)
-    top_band, top_value = sorted_bands[0]
-    second_value = sorted_bands[1][1]
-    confidence = top_value - second_value
-
-    # CLASSIFICATION + ADVICE
-    if confidence < 0.3:
-        state = "Uncertain"
-    else:
-        if top_band == "Theta":
-            state = "Stressed1"
-        elif top_band == "Beta":
-            state = "Drowsy"
-        elif top_band == "Delta":
-            state = "Deep Relaxation" if delta > 0.8 else "Low Activity"
-        elif top_band == "Alpha":
-            state = "Calm" if alpha > 0.3 else "Neutral"
+    # Dosyayı oku
+    raw = mne.io.read_raw_edf(random_file, preload=True)
+    # Basit filter
+    raw.filter(0.5, 50)
+    # Kanal bazlı güç (feature extraction örneği)
+   data = raw.get_data()
+   channel_power = [round((d**2).mean(), 2) for d in data]
+   print("Channel-based power (first 5 channels):", channel_power[:5])
 
     colors = {
         "Calm": "#4CAF50",
