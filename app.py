@@ -113,15 +113,20 @@ with tab1:
     path = os.path.join(DATA_PATH, file)
     st.success(f"Selected file: {file}")
 
-    # LOAD + FILTER
-    # Dosyayı oku
-    raw = mne.io.read_raw_edf(random_file, preload=True)
-    # Basit filter
-    raw.filter(0.5, 50)
-    # Kanal bazlı güç (feature extraction örneği)
-   data = raw.get_data()
-   channel_power = [round((d**2).mean(), 2) for d in data]
-   print("Channel-based power (first 5 channels):", channel_power[:5])
+    # PSD (çok daha doğru)
+psd, freqs = mne.time_frequency.psd_array_welch(
+    data,
+    sfreq=raw.info['sfreq'],
+    fmin=0.5,
+    fmax=50,
+    n_fft=1024
+)
+
+# channel power (frequency-based)
+channel_power = np.mean(psd, axis=1)
+
+st.subheader("Channel Spectral Power (first 5)")
+st.write([float(x) for x in channel_power[:5]])
 
     colors = {
         "Calm": "#4CAF50",
